@@ -191,7 +191,7 @@ function state:Init()
         "pounce", "pounce_bleed", "maim",
         "demoralizing_roar", "infected_wounds",
         "armor_reduction", "major_armor_reduction", "shattering_throw",
-        "bleed",
+        "bleed", "bleed_debuff",  -- bleed_debuff = Mangle/Trauma from ANY source
         "training_dummy",
     }
 
@@ -375,10 +375,14 @@ function state:UpdateForm()
 end
 
 function state:UpdateBuffs()
-    -- Reset all buff expires first
-    for _, buff in pairs(self.buff) do
+    -- Reset all non-form buff expires first (so faded buffs don't persist)
+    for key, buff in pairs(self.buff) do
         if type(buff) == "table" and buff.expires then
-            -- Don't reset form buffs here
+            -- Don't reset form buffs (handled by UpdateForm)
+            if key ~= "cat_form" and key ~= "dire_bear_form" and key ~= "bear_form" and key ~= "moonkin_form" then
+                buff.expires = 0
+                buff.count = 0
+            end
         end
     end
 
@@ -433,10 +437,12 @@ function state:UpdateDebuffs()
             end
         end
 
-        -- Track external debuffs
-        local key = self:GetExternalDebuffKey(spellId, name)
-        if key and self.debuff[key] then
-            self.debuff[key].expires = expirationTime or (self.now + 3600)
+        -- Track external debuffs (from other players, not us)
+        if source ~= "player" then
+            local key = self:GetExternalDebuffKey(spellId, name)
+            if key and self.debuff[key] then
+                self.debuff[key].expires = expirationTime or (self.now + 3600)
+            end
         end
     end
 end
@@ -681,12 +687,24 @@ function state:GetExternalDebuffKey(spellId, name)
         [47467] = "armor_reduction", -- Sunder Armor
         [8647] = "armor_reduction",  -- Expose Armor
         [55754] = "armor_reduction", -- Acid Spit
+        -- Trauma (Arms Warrior) - same effect as Mangle
+        [46857] = "bleed_debuff",
+        -- Mangle (Bear) from other druids
+        [48564] = "bleed_debuff", [48563] = "bleed_debuff",
+        [33987] = "bleed_debuff", [33986] = "bleed_debuff", [33878] = "bleed_debuff",
+        -- Mangle (Cat) from other druids
+        [48566] = "bleed_debuff", [48565] = "bleed_debuff",
+        [33983] = "bleed_debuff", [33982] = "bleed_debuff", [33876] = "bleed_debuff",
     }
 
     if name then
         local lowerName = name:lower()
         if lowerName:find("sunder") or lowerName:find("expose") then
             return "armor_reduction"
+        end
+        -- Mangle or Trauma from any source
+        if lowerName:find("mangle") or lowerName:find("trauma") then
+            return "bleed_debuff"
         end
     end
 

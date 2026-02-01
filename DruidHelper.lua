@@ -77,6 +77,8 @@ local defaults = {
         optimize_rake = true,
         rip_leeway = 0,
         min_roar_offset = 3,
+        -- Advanced tactics
+        bearweave = false,  -- Shift to bear when energy-starved (Lacerateweave)
     },
     feral_bear = {
         enabled = true,
@@ -379,6 +381,27 @@ function DH:SlashCommand(input)
         else
             self:Print("Invalid scale. Use 0.5 to 2.0")
         end
+    elseif cmd == "bearweave" or cmd == "bw" then
+        self.db.feral_cat.bearweave = not self.db.feral_cat.bearweave
+        if self.db.feral_cat.bearweave then
+            self:Print("Bearweave: |cFF00FF00ON|r (Lacerateweave - maintain 5-stack Lacerate)")
+        else
+            self:Print("Bearweave: |cFFFF0000OFF|r (mono-cat rotation)")
+        end
+    elseif cmd == "bear" then
+        -- Detailed bear status for bearweaving
+        local s = self.State
+        self:UpdateState()
+        local enabled = self.db.feral_cat.bearweave
+        self:Print("--- Bear/Weave Status ---")
+        self:Print("Bearweave: " .. (enabled and "|cFF00FF00ON|r" or "|cFFFF0000OFF|r"))
+        self:Print("In Bear: " .. tostring(s.bear_form) .. " | In Cat: " .. tostring(s.cat_form))
+        self:Print("Energy: " .. tostring(s.energy.current) .. " | Rage: " .. tostring(s.rage.current))
+        self:Print("Furor talent: " .. tostring(s.talent.furor.rank) .. "/5")
+        self:Print("Mangle (Bear) CD: " .. (s.cooldown.mangle_bear.ready and "READY" or string.format("%.1fs", s.cooldown.mangle_bear.remains)))
+        self:Print("Lacerate: " .. (s.debuff.lacerate.up and (tostring(s.debuff.lacerate.stacks) .. " stacks, " .. string.format("%.1f", s.debuff.lacerate.remains) .. "s") or "DOWN"))
+        self:Print("Rip: " .. (s.debuff.rip.up and string.format("%.1f", s.debuff.rip.remains) .. "s" or "DOWN"))
+        self:Print("SR: " .. (s.buff.savage_roar.up and string.format("%.1f", s.buff.savage_roar.remains) .. "s" or "DOWN"))
     else
         self:Print("Commands:")
         self:Print("  /dh toggle - Enable/disable addon")
@@ -388,6 +411,8 @@ function DH:SlashCommand(input)
         self:Print("  /dh reset - Reset display position")
         self:Print("  /dh scale <0.5-2.0> - Set display scale")
         self:Print("  /dh debug - Toggle debug mode")
+        self:Print("  /dh bearweave - Toggle bearweaving (Lacerateweave)")
+        self:Print("  /dh live - Toggle live debug frame")
     end
 end
 
@@ -456,7 +481,12 @@ function DH:UpdateRecommendations()
     if form == 3 then -- Cat Form
         recommendations = self:GetFeralCatRecommendations()
     elseif form == 1 then -- Bear Form
-        recommendations = self:GetFeralBearRecommendations()
+        -- If bearweaving is enabled, use cat rotation (handles bear abilities via bearweave logic)
+        if self.db.feral_cat and self.db.feral_cat.bearweave then
+            recommendations = self:GetFeralCatRecommendations()
+        else
+            recommendations = self:GetFeralBearRecommendations()
+        end
     elseif form == 5 then -- Moonkin Form
         recommendations = self:GetBalanceRecommendations()
     else

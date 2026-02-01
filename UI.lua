@@ -268,11 +268,33 @@ function ns.UpdateDebugFrame()
         ff_status = "|cFF00FF00RDY!|r"
     end
 
+    -- Bearweave status
+    local bw_status = ""
+    local bw_enabled = DH.db.feral_cat and DH.db.feral_cat.bearweave
+    if bw_enabled then
+        if s.bear_form then
+            bw_status = string.format("|cFFFF8800BEAR|r R:%d Lac:%d/%d",
+                s.rage.current,
+                s.debuff.lacerate.stacks or 0,
+                s.debuff.lacerate.up and math.floor(s.debuff.lacerate.remains) or 0)
+        else
+            -- Show when bearweave would trigger
+            local can_bw = s.energy.current < 40 and not s.buff.clearcasting.up
+                and (not s.debuff.rip.up or s.debuff.rip.remains > 4.5)
+                and not s.buff.berserk.up
+            if can_bw then
+                bw_status = "|cFF00FF00BW_RDY|r"
+            else
+                bw_status = "|cFF888888BW:wait|r"
+            end
+        end
+    end
+
     local lines = {
         "|cFFFFFF00=== Live Debug ===|r",
         string.format("E: %d | CP: %d | GCD: %.2f", s.energy.current, s.combo_points.current, s.gcd_remains),
         string.format("Berserk: %s | CC: %s", s.buff.berserk.up and "|cFFFF0000UP|r" or "no", s.buff.clearcasting.up and "|cFF00FF00UP|r" or "no"),
-        string.format("FF: %s", ff_status),
+        string.format("FF: %s %s", ff_status, bw_status),
         string.format("SR:%.1f Rip:%.1f Rake:%.1f", s.buff.savage_roar.remains, s.debuff.rip.remains, s.debuff.rake.remains),
         string.format("|cFFFFFF00Rec: %s > %s > %s|r", rec1, rec2, rec3),
     }
