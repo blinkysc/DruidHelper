@@ -561,13 +561,6 @@ function ns.GetFeralCatRecommendations(addon)
         SimulateTime(sim.gcd_remains)
     end
 
-    -- Debug: capture initial state for debugging
-    local debug_ff_ready = sim.ff_ready
-    local debug_ff_cd = sim.ff_cd_remains
-    local debug_berserk = sim.berserk
-    local debug_cc = sim.clearcasting
-    local debug_energy = sim.energy
-
     -- Get recommendations by simulating each ability
     for i = 1, 3 do
         local action
@@ -580,14 +573,6 @@ function ns.GetFeralCatRecommendations(addon)
         end
 
         if action then
-            -- Debug: alert if FF was ready but we chose Shred (shouldn't happen)
-            if i == 1 and action == "shred" and debug_ff_ready and not debug_berserk and not debug_cc then
-                if DH.db and DH.db.debug then
-                    DH:Print(string.format("BUG! FF_rdy=%s CD=%.2f Bzk=%s CC=%s E=%d -> chose Shred",
-                        tostring(debug_ff_ready), debug_ff_cd, tostring(debug_berserk),
-                        tostring(debug_cc), debug_energy))
-                end
-            end
             addRec(action)
             SimulateAbility(action)
         else
