@@ -198,13 +198,14 @@ local function GetNextBearAbility()
     end
 
     -- Priority 5: Lacerate is healthy (5 stacks, 9+ sec) - exit to cat
-    -- No point staying in bear if Lacerate is maintained
+    -- Now we can leave and use any CC proc in cat form
     if sim.lacerate_up and sim.lacerate_stacks == 5 and sim.lacerate_remains >= 9 then
         return "cat_form"
     end
 
-    -- Priority 6: Low rage or CC - exit to cat
-    if sim.rage < 13 or sim.clearcasting then
+    -- Priority 6: Low rage - exit to cat (can't do anything useful)
+    -- Note: CC does NOT trigger exit - Lacerate maintenance takes priority
+    if sim.rage < 13 then
         return "cat_form"
     end
 
@@ -302,25 +303,22 @@ local function GetNextCatAbility()
         return "shred"
     end
 
-    -- Priority 8: Faerie Fire (Feral) ALWAYS before Shred when available
-    -- FF is FREE - always use it before spending energy on filler
-    -- Skip during Berserk (spam abilities) or if already have Clearcasting
-    if sim.ff_ready then
-        if not sim.berserk and not sim.clearcasting then
-            return "faerie_fire_feral"
-        end
-        -- FF is ready but we're in berserk or have CC - skip to shred
+    -- Priority 8: Faerie Fire (Feral) for OoC procs
+    -- Use FF before Shred if not at max energy (avoid capping during GCD)
+    -- Skip during Berserk (spam abilities)
+    if sim.ff_ready and not sim.berserk and sim.energy < 90 then
+        return "faerie_fire_feral"
     end
 
-    -- Priority 9: Bearweave if conditions met (energy starved, no CC, Rip safe, no Berserk)
+    -- Priority 9: Shred (if we have energy)
+    if sim.energy >= shred_cost then
+        return "shred"
+    end
+
+    -- Priority 10: Bearweave if conditions met (energy starved, no CC, Rip safe, no Berserk)
     local bearweave_enabled = DH.db and DH.db.feral_cat and DH.db.feral_cat.bearweave
     if bearweave_enabled and ShouldBearweave() then
         return "dire_bear_form"
-    end
-
-    -- Priority 10: Shred
-    if sim.energy >= shred_cost then
-        return "shred"
     end
 
     -- Not enough energy - wait
