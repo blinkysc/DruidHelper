@@ -1,20 +1,30 @@
 # DruidHelper
 
-A rotation helper addon for Feral Druid DPS in World of Warcraft 3.3.5a (WotLK). Similar to Hekili, it provides real-time ability recommendations based on your current state.
+A rotation helper addon for Feral Druid DPS in World of Warcraft 3.3.5a (WotLK), designed primarily for players learning or improving their **bearweaving** technique.
+
+Bearweaving is an advanced Feral DPS tactic that can boost your damage by ~4-6%, but the timing and decision-making can be difficult to master. This addon shows you exactly when to shift into bear, what abilities to use, and when to shift back to cat.
+
+## Who Is This For?
+
+- Feral Druids who want to learn bearweaving
+- Players looking to optimize their Lacerateweave rotation
+- Anyone wanting real-time feedback on bearweave entry/exit timing
 
 ## Features
 
-### Feral Cat DPS
+### Bearweaving (Lacerateweave)
+- **Entry timing** - Shows when conditions are right to shift to Dire Bear Form (energy < 40, no Clearcasting, Rip safe, etc.)
+- **Bear rotation** - Focuses purely on building and maintaining 5-stack Lacerate
+- **Exit timing** - Tells you when to shift back to cat (energy > 70, Rip expiring, Clearcasting proc)
+- **Live status** - Debug frame shows current bearweave state (`/dh live`)
+
+### Full Cat DPS Rotation
 - **Priority-based rotation** following the optimal WotLK Feral guide
 - **Bleed and buff tracking** - Rip, Rake, Savage Roar, Mangle with pandemic-style refresh windows
+- **SR/Rip Desync Logic** - Clips Savage Roar early when needed to prevent combo point starvation
 - **Clearcasting detection** - Prioritizes free Shred procs
-- **Faerie Fire weaving** - Uses FF for Omen of Clarity procs when appropriate
-- **Tiger's Fury and Berserk timing** - Optimal cooldown usage
-
-### Advanced Tactics
-- **SR/Rip Desync Logic** - Clips Savage Roar early (up to 10 sec) when Rip would expire shortly after, preventing combo point starvation
-- **Bearweaving (Lacerateweave)** - Shifts to Dire Bear Form when energy-starved to maintain a 5-stack Lacerate bleed for extra DPS
-- **External Mangle/Trauma Detection** - Skips Mangle if an Arms warrior or another druid is already keeping the bleed debuff up
+- **Faerie Fire weaving** - Uses FF for Omen of Clarity procs
+- **External Mangle/Trauma Detection** - Skips Mangle if another player has the debuff up
 
 ### UI
 - Movable icon display with cooldown sweep animations
@@ -61,16 +71,40 @@ The addon automatically shows recommendations when you have a target in combat.
 10. **Bearweave** - If enabled and conditions met
 11. **Shred** - Filler
 
-## Bearweaving
+## Bearweaving Guide
 
-When enabled (`/dh bearweave`), the addon will recommend shifting to Dire Bear Form when:
-- Energy < 40
-- No Clearcasting proc active
-- Rip has > 4.5 seconds remaining
-- Berserk is not active
-- 5/5 Furor talent
+Bearweaving is the technique of shifting to Dire Bear Form during energy-starved moments to deal damage (and build Lacerate stacks) while passively regenerating energy. When done correctly, you never miss a Cat Form ability because you're always back before capping energy.
 
-In bear form, it focuses purely on maintaining a 5-stack Lacerate bleed, then exits back to cat form.
+### Enable Bearweaving
+```
+/dh bearweave
+```
+
+### When to Enter Bear (addon handles this)
+- Energy < 40 (nothing to cast in cat)
+- No Clearcasting proc (don't waste free Shred)
+- Rip has > 4.5 seconds remaining (safety margin)
+- Savage Roar has > 4 seconds remaining
+- Berserk is not active (spam cat abilities during Berserk)
+- You have 5/5 Furor talent (gives 10 rage on shift)
+
+### What to Do in Bear
+The addon recommends **Lacerateweave** - focusing purely on the Lacerate bleed:
+1. Build Lacerate to 5 stacks
+2. Refresh Lacerate before it falls off
+3. Exit to cat when Lacerate is healthy (5 stacks, 9+ sec remaining)
+
+### When to Exit Bear (addon handles this)
+- Energy > 70 (approaching cap)
+- Rip will expire in < 3 seconds
+- Clearcasting procs (use it in cat)
+- Lacerate is at 5 stacks with 9+ seconds remaining
+
+### Tips for Learning
+1. Enable the live debug frame: `/dh live`
+2. Watch for "BW_RDY" indicator (bearweave conditions met)
+3. Practice on a training dummy first
+4. The addon shows bear abilities while in bear form
 
 ## Requirements
 
