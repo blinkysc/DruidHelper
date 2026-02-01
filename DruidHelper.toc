@@ -1,0 +1,12 @@
+## Interface: 30300
+## Version: 1.0.0
+## Title: DruidHelper
+## Author: Custom
+## Notes: Priority rotation helper for Druid specs (Feral Cat, Feral Bear, Balance)
+## SavedVariables: DruidHelperDB
+
+DruidHelper.lua
+State.lua
+Druid.lua
+Core.lua
+UI.lua
