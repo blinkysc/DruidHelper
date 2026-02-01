@@ -381,6 +381,14 @@ function DH:SlashCommand(input)
         else
             self:Print("Invalid scale. Use 0.5 to 2.0")
         end
+    elseif string.match(cmd, "^icons ") then
+        local val = tonumber(string.match(cmd, "^icons (.+)"))
+        if val and val >= 1 and val <= 4 then
+            self.db.display.numIcons = val
+            self:Print("Icons set to " .. val .. " - /reload to apply")
+        else
+            self:Print("Invalid. Use 1 to 4")
+        end
     elseif cmd == "bearweave" or cmd == "bw" then
         self.db.feral_cat.bearweave = not self.db.feral_cat.bearweave
         if self.db.feral_cat.bearweave then

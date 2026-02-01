@@ -92,7 +92,7 @@ function ns.InitializeUI(addon)
     local mainFrame = CreateMainFrame()
 
     -- Create buttons
-    local numIcons = addon.db.display.numIcons or 4
+    local numIcons = addon.db.display.numIcons or 3
     for i = 1, numIcons do
         ns.UI.Buttons[i] = CreateAbilityButton(mainFrame, i)
     end
