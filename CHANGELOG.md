@@ -2,6 +2,15 @@
 
 All notable changes to PriorityHelper will be documented in this file.
 
+## [1.1.6] - 2026-03-15
+
+### Added
+- Recommendation smoothing system: slots resist changing for 0.3s to prevent
+  visual stutter from micro-timing fluctuations
+
+### Removed
+- Debug logging system (3.3.5a client restrictions prevent reliable disk writes)
+
 ## [1.1.5] - 2026-03-15
 
 ### Changed

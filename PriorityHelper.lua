@@ -6,7 +6,7 @@
 PriorityHelper = {}
 local DH = PriorityHelper
 
-DH.Version = "1.1.5"
+DH.Version = "1.1.6"
 
 -- Namespace for internal data
 local ns = {}
@@ -857,3 +857,4 @@ function DH:HideUI()
         ns.UI.MainFrame:Hide()
     end
 end
+

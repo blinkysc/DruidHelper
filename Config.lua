@@ -208,6 +208,65 @@ end
 -- Use the selected mode's rotation instead of spec-based dispatch
 -- ============================================================================
 
+-- Smoothing: track when each slot last changed and resist unnecessary swaps
+local smoothState = {
+    abilities = {},     -- { [slot] = abilityKey }
+    changeTime = {},    -- { [slot] = GetTime() when this slot last changed }
+}
+local SMOOTH_LOCK_DURATION = 0.3  -- Slot stays locked for this many seconds after changing
+
+local function SmoothRecommendations(newRecs)
+    local now = GetTime()
+    local smoothed = {}
+
+    for i = 1, 3 do
+        local newAbility = newRecs[i] and newRecs[i].ability or nil
+        local oldAbility = smoothState.abilities[i]
+        local lastChange = smoothState.changeTime[i] or 0
+        local locked = (now - lastChange) < SMOOTH_LOCK_DURATION
+
+        if newAbility == oldAbility then
+            -- Same ability, keep it
+            smoothed[i] = newRecs[i]
+        elseif not oldAbility or not locked then
+            -- Slot is empty, unlocked, or expired — accept the change
+            smoothed[i] = newRecs[i]
+            if newAbility ~= oldAbility then
+                smoothState.abilities[i] = newAbility
+                smoothState.changeTime[i] = now
+            end
+        else
+            -- Slot is locked — check if old ability is still in the new recs somewhere
+            -- If it is, keep it in this slot (resist the swap)
+            local oldStillValid = false
+            for j = 1, #newRecs do
+                if newRecs[j].ability == oldAbility then
+                    oldStillValid = true
+                    break
+                end
+            end
+
+            if oldStillValid then
+                -- Old ability still recommended, keep it in this slot
+                -- Find its data from newRecs
+                for j = 1, #newRecs do
+                    if newRecs[j].ability == oldAbility then
+                        smoothed[i] = newRecs[j]
+                        break
+                    end
+                end
+            else
+                -- Old ability completely gone from recommendations — must change
+                smoothed[i] = newRecs[i]
+                smoothState.abilities[i] = newAbility
+                smoothState.changeTime[i] = now
+            end
+        end
+    end
+
+    return smoothed
+end
+
 function DH:UpdateRecommendations()
     if not self.db or not self.db.enabled then return end
     if not UnitExists("target") and not ns.inCombat then return end
@@ -220,6 +279,9 @@ function DH:UpdateRecommendations()
     if mode and mode.rotation then
         recommendations = mode.rotation(self)
     end
+
+    -- Apply smoothing to prevent stutter
+    recommendations = SmoothRecommendations(recommendations)
 
     ns.recommendations = recommendations
     self:UpdateUI()
