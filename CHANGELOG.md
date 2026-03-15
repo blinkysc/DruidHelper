@@ -2,6 +2,26 @@
 
 All notable changes to PriorityHelper will be documented in this file.
 
+## [1.1.3] - 2026-03-15
+
+### Added
+- Core simulation framework: GCD/haste, mana, energy, rage, cooldown, target helpers
+- Mana simulation for Paladin: ability costs, JoW return (25%), Replenishment ticking
+- `RegisterManaCosts()`, `RegisterAbilityCooldowns()` framework APIs
+- `SimInitGCD()` with melee/spell haste support
+- `SimInitMana/Energy/Rage/Target/CD()` helpers for all classes
+- Divine Plea integrated into sim (appears in GCD gaps when mana < 40%)
+
+### Fixed
+- Paladin GCD now haste-adjusted (was hardcoded 1.5s)
+- Judgement CD now respects Improved Judgements talent (8s with 2/2)
+- Judgement cooldown sweep now shows in UI (key mismatch fix)
+- Divine Plea no longer pops in as Rec1 over DPS abilities
+
+### Changed
+- Paladin rotations fully simulation-driven with mana tracking
+- Removed seal and Divine Plea snoozing (handled by sim instead)
+
 ## [1.1.2] - 2026-03-15
 
 ### Added

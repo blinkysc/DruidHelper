@@ -6,7 +6,7 @@
 PriorityHelper = {}
 local DH = PriorityHelper
 
-DH.Version = "1.1.2"
+DH.Version = "1.1.3"
 
 -- Namespace for internal data
 local ns = {}
@@ -93,6 +93,161 @@ end
 ns.snoozeable = {}
 function DH:RegisterSnoozeable(key, duration)
     ns.snoozeable[key] = duration or 60
+end
+
+-- ============================================================================
+-- SIMULATION FRAMEWORK
+-- Core simulation utilities used by all class rotation modules.
+-- All sim functions operate on a sim table (not real state).
+-- ============================================================================
+
+-- ---- Registered Data ----
+ns.manaCosts = {}       -- { [abilityKey] = costAsPctOfBaseMana }
+ns.abilityCDs = {}      -- { [abilityKey] = baseCooldownSeconds }
+
+-- ---- Registration ----
+
+-- Register mana costs for abilities (as % of base mana, e.g. 0.05 = 5%)
+function DH:RegisterManaCosts(costs)
+    for key, cost in pairs(costs) do
+        ns.manaCosts[key] = cost
+    end
+end
+
+-- Register base cooldown durations for abilities
+function DH:RegisterAbilityCooldowns(cds)
+    for key, cd in pairs(cds) do
+        ns.abilityCDs[key] = cd
+    end
+end
+
+-- ---- GCD / Haste ----
+
+-- Initialize GCD in a sim table from state (haste-adjusted)
+-- resourceType: "melee" or "spell" (determines which haste to use)
+function DH:SimInitGCD(simState, s, resourceType)
+    local hasteBonus
+    if resourceType == "spell" then
+        hasteBonus = (s.stat.spell_haste or 1)  -- Already a multiplier
+    else
+        hasteBonus = 1 + (s.stat.haste or 0) / 100  -- Melee haste rating %
+    end
+    simState.haste = hasteBonus
+    simState.gcd = math.max(1.0, 1.5 / hasteBonus)
+    simState.gcd_remains = s.gcd_remains or 0
+end
+
+-- Get a haste-adjusted cast time
+function DH:SimCastTime(simState, baseCastTime)
+    local haste = simState.haste or 1
+    return baseCastTime / haste
+end
+
+-- ---- Mana ----
+
+-- Initialize mana fields in a sim table from state
+function DH:SimInitMana(simState, s)
+    simState.mana = s.mana.current
+    simState.mana_max = s.mana.max
+    simState.mana_pct = s.mana.pct
+    simState.replenishment_remains = 0
+    simState.mp5 = 0
+end
+
+local function UpdateManaPct(simState)
+    simState.mana_pct = simState.mana_max > 0 and (simState.mana / simState.mana_max * 100) or 0
+end
+
+-- Spend mana for an ability (by key or override %)
+function DH:SimSpendMana(simState, abilityKey, overrideCost)
+    local cost_pct = overrideCost or ns.manaCosts[abilityKey]
+    if not cost_pct then return end
+    simState.mana = math.max(0, simState.mana - simState.mana_max * cost_pct)
+    UpdateManaPct(simState)
+end
+
+-- Gain flat mana
+function DH:SimGainMana(simState, amount)
+    simState.mana = math.min(simState.mana_max, simState.mana + amount)
+    UpdateManaPct(simState)
+end
+
+-- Gain mana as % of max
+function DH:SimGainManaPct(simState, pct)
+    DH:SimGainMana(simState, simState.mana_max * pct)
+end
+
+-- Tick mana regen over time (Replenishment + MP5)
+function DH:SimTickMana(simState, seconds)
+    if simState.replenishment_remains and simState.replenishment_remains > 0 then
+        simState.replenishment_remains = simState.replenishment_remains - seconds
+        if simState.replenishment_remains < 0 then simState.replenishment_remains = 0 end
+        DH:SimGainMana(simState, simState.mana_max * 0.002 * seconds)
+    end
+    if simState.mp5 and simState.mp5 > 0 then
+        DH:SimGainMana(simState, simState.mp5 / 5 * seconds)
+    end
+end
+
+-- Check if sim can afford an ability
+function DH:SimCanAfford(simState, abilityKey)
+    local cost_pct = ns.manaCosts[abilityKey]
+    if not cost_pct then return true end
+    return simState.mana >= (simState.mana_max * cost_pct)
+end
+
+-- ---- Energy ----
+
+-- Initialize energy fields in a sim table from state
+function DH:SimInitEnergy(simState, s)
+    simState.energy = s.energy.current
+    simState.energy_max = s.energy.max or 100
+    simState.energy_regen = 10  -- Base 10 energy/sec
+end
+
+-- Tick energy regen over time
+function DH:SimTickEnergy(simState, seconds)
+    simState.energy = math.min(simState.energy_max, simState.energy + simState.energy_regen * seconds)
+end
+
+-- ---- Rage ----
+
+-- Initialize rage fields in a sim table from state
+function DH:SimInitRage(simState, s)
+    simState.rage = s.rage.current
+    simState.rage_max = s.rage.max or 100
+end
+
+-- ---- Cooldown Tracking ----
+
+-- Initialize a cooldown in sim from state
+-- Returns: ready (bool), remains (seconds)
+function DH:SimInitCD(s, cdKey)
+    local cd = s.cooldown[cdKey]
+    if cd then
+        return cd.ready, cd.remains
+    end
+    return true, 0
+end
+
+-- Tick down a cooldown field in sim, returns new ready state
+function DH:SimTickCD(simState, cdField, readyField, seconds)
+    if simState[cdField] > 0 then
+        simState[cdField] = simState[cdField] - seconds
+        if simState[cdField] <= 0 then
+            simState[readyField] = true
+            simState[cdField] = 0
+        end
+    end
+end
+
+-- ---- Target ----
+
+-- Initialize target fields in a sim table from state
+function DH:SimInitTarget(simState, s)
+    simState.ttd = s.target.time_to_die
+    simState.target_pct = s.target.health.pct
+    simState.in_execute = s.target.health.pct < 20
 end
 
 -- ============================================================================

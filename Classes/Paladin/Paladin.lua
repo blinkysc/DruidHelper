@@ -209,6 +209,7 @@ DH:RegisterCooldowns({
     crusader_strike = SPELLS.CRUSADER_STRIKE,
     divine_storm = SPELLS.DIVINE_STORM,
     judgement = SPELLS.JUDGEMENT_OF_WISDOM,
+    judgement_of_wisdom = SPELLS.JUDGEMENT_OF_WISDOM,
     hammer_of_wrath = SPELLS.HAMMER_OF_WRATH,
     exorcism = SPELLS.EXORCISM,
     consecration = SPELLS.CONSECRATION,
@@ -335,6 +336,20 @@ DH:RegisterDefaults({
     common = {
         dummy_ttd = 300,
     },
+})
+
+-- Mana costs (% of base mana)
+DH:RegisterManaCosts({
+    crusader_strike = 0.05,
+    judgement_of_wisdom = 0.05,
+    divine_storm = 0.12,
+    consecration = 0.22,
+    exorcism = 0.08,
+    holy_wrath = 0.20,
+    hammer_of_wrath = 0.12,
+    shield_of_righteousness = 0.06,
+    hammer_of_the_righteous = 0.06,
+    holy_shield = 0.10,
 })
 
 -- Major cooldowns: snoozeable if player skips them (60s snooze)

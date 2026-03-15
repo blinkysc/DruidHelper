@@ -1,6 +1,7 @@
 -- Classes/Paladin/Core.lua
 -- Priority rotation logic for Paladin specs (3.3.5a compatible)
--- Based on wowsim/wotlk APL
+-- Based on wowsim/wotlk APL + wowhead guides
+-- Uses simulation system: copy state, get ability, simulate, repeat for 3
 
 local DH = PriorityHelper
 if not DH then return end
@@ -27,20 +28,236 @@ local function addRec(recommendations, key)
 end
 
 -- ============================================================================
--- RETRIBUTION ROTATION (wowsim APL)
---
--- Priority:
--- 1. Hammer of Wrath (execute phase, < 20% HP)
--- 2. Judgement of Wisdom
--- 3. Crusader Strike
--- 4. Divine Storm
--- 5. Exorcism (only with Art of War proc - instant cast)
--- 6. Consecration (if > 4s remaining on fight)
---
--- Cooldowns (handled separately):
--- - Avenging Wrath on CD
--- - Divine Plea for mana
+-- SHARED PALADIN SIMULATION
 -- ============================================================================
+
+local sim = {}
+
+local function ResetPaladinSim(s)
+    -- GCD + haste (melee-based for Paladin)
+    DH:SimInitGCD(sim, s, "melee")
+
+    -- Target
+    DH:SimInitTarget(sim, s)
+
+    -- Target type (cached once, doesn't change mid-fight)
+    local creatureType = UnitCreatureType("target")
+    sim.is_undead_or_demon = creatureType == "Undead" or creatureType == "Demon"
+
+    -- Improved Judgements: reduces Judgement CD by 1s per rank (max 2)
+    sim.judge_base_cd = 10 - (s.talent.improved_judgements and s.talent.improved_judgements.rank or 0)
+
+    -- Resources
+    DH:SimInitMana(sim, s)
+
+    -- Buffs
+    sim.avenging_wrath_up = s.buff.avenging_wrath.up
+    sim.art_of_war_up = s.buff.art_of_war.up
+    sim.righteous_fury_up = s.buff.righteous_fury.up
+    sim.holy_shield_up = s.buff.holy_shield.up
+    sim.holy_shield_remains = s.buff.holy_shield.remains
+
+    -- Cooldowns
+    sim.cs_ready = s.cooldown.crusader_strike.ready
+    sim.cs_cd = s.cooldown.crusader_strike.remains
+    sim.judge_ready = s.cooldown.judgement.ready
+    sim.judge_cd = s.cooldown.judgement.remains
+    sim.ds_ready = s.cooldown.divine_storm.ready
+    sim.ds_cd = s.cooldown.divine_storm.remains
+    sim.how_ready = s.cooldown.hammer_of_wrath.ready
+    sim.how_cd = s.cooldown.hammer_of_wrath.remains
+    sim.exo_ready = s.cooldown.exorcism.ready
+    sim.exo_cd = s.cooldown.exorcism.remains
+    sim.cons_ready = s.cooldown.consecration.ready
+    sim.cons_cd = s.cooldown.consecration.remains
+    sim.aw_ready = s.cooldown.avenging_wrath.ready and not DH:IsSnoozed("avenging_wrath")
+    sim.aw_cd = s.cooldown.avenging_wrath.remains
+    sim.plea_ready = s.cooldown.divine_plea.ready
+    sim.plea_cd = s.cooldown.divine_plea.remains
+    sim.hw_ready = s.cooldown.holy_wrath.ready
+    sim.hw_cd = s.cooldown.holy_wrath.remains
+
+    -- Prot-specific
+    sim.sor_ready = s.cooldown.shield_of_righteousness.ready
+    sim.sor_cd = s.cooldown.shield_of_righteousness.remains
+    sim.hotr_ready = s.cooldown.hammer_of_the_righteous.ready
+    sim.hotr_cd = s.cooldown.hammer_of_the_righteous.remains
+    sim.hs_ready = s.cooldown.holy_shield.ready
+    sim.hs_cd = s.cooldown.holy_shield.remains
+
+    -- Replenishment (from Judgements of the Wise)
+    sim.replenishment_remains = 0  -- Will be set when Judgement is simulated
+
+    -- Talents
+    sim.has_ds = s.talent.divine_storm.rank > 0
+end
+
+local function SimulatePaladinTime(seconds)
+    if seconds <= 0 then return end
+
+    -- Tick down GCD
+    if sim.gcd_remains > 0 then
+        sim.gcd_remains = sim.gcd_remains - seconds
+        if sim.gcd_remains < 0 then sim.gcd_remains = 0 end
+    end
+
+    -- Tick down all cooldowns
+    if sim.cs_cd > 0 then
+        sim.cs_cd = sim.cs_cd - seconds
+        if sim.cs_cd <= 0 then sim.cs_ready = true; sim.cs_cd = 0 end
+    end
+    if sim.judge_cd > 0 then
+        sim.judge_cd = sim.judge_cd - seconds
+        if sim.judge_cd <= 0 then sim.judge_ready = true; sim.judge_cd = 0 end
+    end
+    if sim.ds_cd > 0 then
+        sim.ds_cd = sim.ds_cd - seconds
+        if sim.ds_cd <= 0 then sim.ds_ready = true; sim.ds_cd = 0 end
+    end
+    if sim.how_cd > 0 then
+        sim.how_cd = sim.how_cd - seconds
+        if sim.how_cd <= 0 then sim.how_ready = true; sim.how_cd = 0 end
+    end
+    if sim.exo_cd > 0 then
+        sim.exo_cd = sim.exo_cd - seconds
+        if sim.exo_cd <= 0 then sim.exo_ready = true; sim.exo_cd = 0 end
+    end
+    if sim.cons_cd > 0 then
+        sim.cons_cd = sim.cons_cd - seconds
+        if sim.cons_cd <= 0 then sim.cons_ready = true; sim.cons_cd = 0 end
+    end
+    if sim.hw_cd > 0 then
+        sim.hw_cd = sim.hw_cd - seconds
+        if sim.hw_cd <= 0 then sim.hw_ready = true; sim.hw_cd = 0 end
+    end
+    if sim.plea_cd > 0 then
+        sim.plea_cd = sim.plea_cd - seconds
+        if sim.plea_cd <= 0 then sim.plea_ready = true; sim.plea_cd = 0 end
+    end
+    if sim.aw_cd > 0 then
+        sim.aw_cd = sim.aw_cd - seconds
+        if sim.aw_cd <= 0 then sim.aw_ready = true; sim.aw_cd = 0 end
+    end
+
+    -- Prot CDs
+    if sim.sor_cd > 0 then
+        sim.sor_cd = sim.sor_cd - seconds
+        if sim.sor_cd <= 0 then sim.sor_ready = true; sim.sor_cd = 0 end
+    end
+    if sim.hotr_cd > 0 then
+        sim.hotr_cd = sim.hotr_cd - seconds
+        if sim.hotr_cd <= 0 then sim.hotr_ready = true; sim.hotr_cd = 0 end
+    end
+    if sim.hs_cd > 0 then
+        sim.hs_cd = sim.hs_cd - seconds
+        if sim.hs_cd <= 0 then sim.hs_ready = true; sim.hs_cd = 0 end
+    end
+
+    -- Holy Shield buff
+    if sim.holy_shield_remains > 0 then
+        sim.holy_shield_remains = sim.holy_shield_remains - seconds
+        if sim.holy_shield_remains <= 0 then
+            sim.holy_shield_up = false
+            sim.holy_shield_remains = 0
+        end
+    end
+
+    -- Mana regen (Replenishment + MP5) via framework
+    DH:SimTickMana(sim, seconds)
+
+    -- Art of War doesn't tick down in sim (it's a proc, consumed on use)
+end
+
+-- ============================================================================
+-- RETRIBUTION SIMULATION
+-- ============================================================================
+
+local function SimulateRetAbility(action)
+    -- Spend mana via framework
+    DH:SimSpendMana(sim, action)
+
+    if action == "crusader_strike" then
+        sim.cs_ready = false
+        sim.cs_cd = 4
+    elseif action == "judgement_of_wisdom" then
+        sim.judge_ready = false
+        sim.judge_cd = sim.judge_base_cd
+        -- Judgements of the Wise: 25% base mana returned
+        DH:SimGainManaPct(sim, 0.25)
+        sim.replenishment_remains = 15
+    elseif action == "divine_storm" then
+        sim.ds_ready = false
+        sim.ds_cd = 10
+    elseif action == "hammer_of_wrath" then
+        sim.how_ready = false
+        sim.how_cd = 6
+    elseif action == "exorcism" then
+        sim.exo_ready = false
+        sim.exo_cd = 15
+        sim.art_of_war_up = false
+    elseif action == "consecration" then
+        sim.cons_ready = false
+        sim.cons_cd = 8
+    elseif action == "holy_wrath" then
+        sim.hw_ready = false
+        sim.hw_cd = 30
+    elseif action == "avenging_wrath" then
+        sim.aw_ready = false
+        sim.aw_cd = 180
+        sim.avenging_wrath_up = true
+    elseif action == "divine_plea" then
+        sim.plea_ready = false
+        sim.plea_cd = 60
+        -- Divine Plea restores 25% mana over 15s — approximate as immediate
+        DH:SimGainManaPct(sim, 0.25)
+    end
+
+    SimulatePaladinTime(sim.gcd)
+end
+
+local function GetNextRetAbility()
+    -- Avenging Wrath (snoozeable)
+    if sim.aw_ready and not sim.avenging_wrath_up then
+        return "avenging_wrath"
+    end
+
+    -- Execute phase: Hammer of Wrath
+    if sim.in_execute and sim.how_ready then
+        return "hammer_of_wrath"
+    end
+
+    -- Exorcism with Art of War vs Undead/Demon (100% crit, high priority)
+    if sim.is_undead_or_demon and sim.art_of_war_up and sim.exo_ready then
+        return "exorcism"
+    end
+
+    -- Core FCFS
+    if sim.cs_ready then return "crusader_strike" end
+    if sim.judge_ready then return "judgement_of_wisdom" end
+    if sim.has_ds and sim.ds_ready then return "divine_storm" end
+
+    -- Consecration
+    if sim.cons_ready and sim.ttd > 4 then return "consecration" end
+
+    -- Exorcism with Art of War (normal priority vs non-undead)
+    if not sim.is_undead_or_demon and sim.art_of_war_up and sim.exo_ready then
+        return "exorcism"
+    end
+
+    -- Holy Wrath (only vs undead/demons)
+    if sim.is_undead_or_demon and sim.hw_ready then
+        return "holy_wrath"
+    end
+
+    -- Divine Plea — weave in when mana is getting low
+    -- At ~30% we risk not being able to cast core abilities
+    -- At ~40% it's a good time to weave it in during a GCD gap
+    if sim.plea_ready and sim.mana_pct < 40 then
+        return "divine_plea"
+    end
+
+    return nil
+end
 
 local function GetRetributionRecommendations(addon)
     local recommendations = {}
@@ -50,87 +267,36 @@ local function GetRetributionRecommendations(addon)
         return recommendations
     end
 
-    -- Build priority queue: { abilityKey, cooldownKey, ready, remains, condition }
-    -- Sorted by: ready first (by priority order), then by CD remaining
-    local queue = {}
-    local function queueAbility(abilityKey, cdKey, condition)
-        if condition == false then return end
-        local cd = s.cooldown[cdKey]
-        local remains = cd and cd.remains or 0
-        local ready = remains <= 0.1
-        table.insert(queue, { ability = abilityKey, ready = ready, remains = remains })
+    ResetPaladinSim(s)
+
+    -- Account for current GCD
+    if sim.gcd_remains > 0 then
+        SimulatePaladinTime(sim.gcd_remains)
     end
 
-    -- Avenging Wrath off CD (snoozeable - if player skips it, don't nag for 60s)
-    if s.cooldown.avenging_wrath.ready and not s.buff.avenging_wrath.up
-        and not DH:IsSnoozed("avenging_wrath") then
-        if addRec(recommendations, "avenging_wrath") then return recommendations end
-    end
+    for i = 1, 3 do
+        local action = GetNextRetAbility()
 
-    -- Target type detection
-    local creatureType = UnitCreatureType("target")
-    local isUndeadOrDemon = creatureType == "Undead" or creatureType == "Demon"
+        if action then
+            addRec(recommendations, action)
+            SimulateRetAbility(action)
+        else
+            -- Nothing ready, advance time to next available ability
+            local shortest = 999
+            if sim.cs_cd > 0 and sim.cs_cd < shortest then shortest = sim.cs_cd end
+            if sim.judge_cd > 0 and sim.judge_cd < shortest then shortest = sim.judge_cd end
+            if sim.has_ds and sim.ds_cd > 0 and sim.ds_cd < shortest then shortest = sim.ds_cd end
+            if sim.cons_cd > 0 and sim.cons_cd < shortest then shortest = sim.cons_cd end
+            if sim.in_execute and sim.how_cd > 0 and sim.how_cd < shortest then shortest = sim.how_cd end
 
-    -- Execute phase: HoW (highest priority when available)
-    local inExecute = s.target.health.pct < 20
-    if inExecute then
-        queueAbility("hammer_of_wrath", "hammer_of_wrath")
-    end
-
-    -- Core FCFS rotation (wowhead priority)
-    -- Against Undead/Demons: Exorcism gets 100% crit, boost it above CS
-    if isUndeadOrDemon and s.buff.art_of_war.up then
-        queueAbility("exorcism", "exorcism")
-    end
-
-    -- 1. Crusader Strike - "highest priority button in single target"
-    queueAbility("crusader_strike", "crusader_strike")
-    -- 2. Judgement of Wisdom
-    queueAbility("judgement_of_wisdom", "judgement")
-    -- 3. Divine Storm
-    queueAbility("divine_storm", "divine_storm", s.talent.divine_storm.rank > 0)
-    -- 4. Consecration
-    if s.target.time_to_die > 4 then
-        queueAbility("consecration", "consecration")
-    end
-    -- 5. Exorcism (Art of War proc - normal priority vs non-undead)
-    if not isUndeadOrDemon and s.buff.art_of_war.up then
-        queueAbility("exorcism", "exorcism")
-    end
-    -- 6. Holy Wrath (only vs undead/demons - it can't hit other types)
-    if isUndeadOrDemon then
-        queueAbility("holy_wrath", "holy_wrath")
-    end
-
-    -- Divine Plea if low mana
-    if s.mana.pct < 50 then
-        queueAbility("divine_plea", "divine_plea")
-    end
-
-    -- Pass 1: add ready abilities in priority order (what to press NOW)
-    for _, entry in ipairs(queue) do
-        if entry.ready then
-            if addRec(recommendations, entry.ability) then return recommendations end
-        end
-    end
-
-    -- Pass 2: fill remaining slots with next abilities off CD (sorted by shortest CD)
-    -- so the player can see what's coming up next
-    local onCD = {}
-    for _, entry in ipairs(queue) do
-        if not entry.ready then
-            table.insert(onCD, entry)
-        end
-    end
-    table.sort(onCD, function(a, b) return a.remains < b.remains end)
-    for _, entry in ipairs(onCD) do
-        if #recommendations >= 3 then break end
-        local isDupe = false
-        for _, rec in ipairs(recommendations) do
-            if rec.ability == entry.ability then isDupe = true break end
-        end
-        if not isDupe then
-            addRec(recommendations, entry.ability)
+            if shortest < 999 then
+                SimulatePaladinTime(shortest + 0.01)
+                action = GetNextRetAbility()
+                if action then
+                    addRec(recommendations, action)
+                    SimulateRetAbility(action)
+                end
+            end
         end
     end
 
@@ -138,19 +304,82 @@ local function GetRetributionRecommendations(addon)
 end
 
 -- ============================================================================
--- PROTECTION ROTATION (wowsim APL)
---
--- Priority:
--- 1. Shield of Righteousness (when HotR CD <= 3s)
--- 2. Hammer of the Righteous (when SoR CD <= 3s)
--- 3. Hammer of Wrath (execute phase)
--- 4. Consecration
--- 5. Holy Shield (maintain)
--- 6. Judgement of Wisdom
---
--- The SoR/HotR interleaving ensures you always have one of the two
--- primary threat abilities coming off cooldown soon.
+-- PROTECTION SIMULATION
 -- ============================================================================
+
+local function SimulateProtAbility(action)
+    -- Spend mana via framework
+    DH:SimSpendMana(sim, action)
+
+    if action == "shield_of_righteousness" then
+        sim.sor_ready = false
+        sim.sor_cd = 6
+    elseif action == "hammer_of_the_righteous" then
+        sim.hotr_ready = false
+        sim.hotr_cd = 6
+    elseif action == "hammer_of_wrath" then
+        sim.how_ready = false
+        sim.how_cd = 6
+    elseif action == "consecration" then
+        sim.cons_ready = false
+        sim.cons_cd = 8
+    elseif action == "holy_shield" then
+        sim.hs_ready = false
+        sim.hs_cd = 8
+        sim.holy_shield_up = true
+        sim.holy_shield_remains = 10
+    elseif action == "judgement_of_wisdom" then
+        sim.judge_ready = false
+        sim.judge_cd = sim.judge_base_cd
+        DH:SimGainManaPct(sim, 0.25)
+        sim.replenishment_remains = 15
+    elseif action == "divine_plea" then
+        sim.plea_ready = false
+        sim.plea_cd = 60
+        DH:SimGainManaPct(sim, 0.25)
+    elseif action == "righteous_fury" then
+        sim.righteous_fury_up = true
+    end
+
+    SimulatePaladinTime(sim.gcd)
+end
+
+local function GetNextProtAbility()
+    -- Righteous Fury check
+    if not sim.righteous_fury_up then
+        return "righteous_fury"
+    end
+
+    -- SoR / HotR interleave (969 rotation)
+    -- Cast SoR when HotR is coming off CD within 3s
+    if sim.sor_ready and sim.hotr_cd <= 3 then
+        return "shield_of_righteousness"
+    end
+    -- Cast HotR when SoR is coming off CD within 3s
+    if sim.hotr_ready and sim.sor_cd <= 3 then
+        return "hammer_of_the_righteous"
+    end
+    -- If both ready, prioritize SoR
+    if sim.sor_ready then return "shield_of_righteousness" end
+    if sim.hotr_ready then return "hammer_of_the_righteous" end
+
+    -- Execute phase: Hammer of Wrath
+    if sim.in_execute and sim.how_ready then
+        return "hammer_of_wrath"
+    end
+
+    -- 9-second abilities (fill between SoR/HotR)
+    if sim.cons_ready then return "consecration" end
+    if sim.hs_ready then return "holy_shield" end
+    if sim.judge_ready then return "judgement_of_wisdom" end
+
+    -- Divine Plea when mana getting low
+    if sim.plea_ready and sim.mana_pct < 40 then
+        return "divine_plea"
+    end
+
+    return nil
+end
 
 local function GetProtectionRecommendations(addon)
     local recommendations = {}
@@ -160,81 +389,37 @@ local function GetProtectionRecommendations(addon)
         return recommendations
     end
 
-    -- Righteous Fury check
-    if not s.buff.righteous_fury.up then
-        if addRec(recommendations, "righteous_fury") then return recommendations end
+    ResetPaladinSim(s)
+
+    -- Account for current GCD
+    if sim.gcd_remains > 0 then
+        SimulatePaladinTime(sim.gcd_remains)
     end
 
-    -- Build priority queue
-    local queue = {}
-    local function queueAbility(abilityKey, cdKey, condition)
-        if condition == false then return end
-        local cd = s.cooldown[cdKey]
-        local remains = cd and cd.remains or 0
-        local ready = remains <= 0.1
-        table.insert(queue, { ability = abilityKey, ready = ready, remains = remains })
-    end
+    for i = 1, 3 do
+        local action = GetNextProtAbility()
 
-    -- SoR / HotR interleave logic (from sim APL)
-    -- Prioritize whichever is ready when the other is coming off CD within 3s
-    local sor_ready = s.cooldown.shield_of_righteousness.ready
-    local hotr_ready = s.cooldown.hammer_of_the_righteous.ready
-    local sor_remains = s.cooldown.shield_of_righteousness.remains
-    local hotr_remains = s.cooldown.hammer_of_the_righteous.remains
+        if action then
+            addRec(recommendations, action)
+            SimulateProtAbility(action)
+        else
+            -- Nothing ready, advance time to next available ability
+            local shortest = 999
+            if sim.sor_cd > 0 and sim.sor_cd < shortest then shortest = sim.sor_cd end
+            if sim.hotr_cd > 0 and sim.hotr_cd < shortest then shortest = sim.hotr_cd end
+            if sim.cons_cd > 0 and sim.cons_cd < shortest then shortest = sim.cons_cd end
+            if sim.hs_cd > 0 and sim.hs_cd < shortest then shortest = sim.hs_cd end
+            if sim.judge_cd > 0 and sim.judge_cd < shortest then shortest = sim.judge_cd end
+            if sim.in_execute and sim.how_cd > 0 and sim.how_cd < shortest then shortest = sim.how_cd end
 
-    if sor_ready and hotr_remains <= 3 then
-        if addRec(recommendations, "shield_of_righteousness") then return recommendations end
-    elseif hotr_ready and sor_remains <= 3 then
-        if addRec(recommendations, "hammer_of_the_righteous") then return recommendations end
-    elseif sor_ready then
-        if addRec(recommendations, "shield_of_righteousness") then return recommendations end
-    elseif hotr_ready then
-        if addRec(recommendations, "hammer_of_the_righteous") then return recommendations end
-    end
-
-    -- Queue ALL abilities for filling slots (SoR/HotR included for lookahead)
-    queueAbility("shield_of_righteousness", "shield_of_righteousness")
-    queueAbility("hammer_of_the_righteous", "hammer_of_the_righteous")
-    if s.target.health.pct < 20 then
-        queueAbility("hammer_of_wrath", "hammer_of_wrath")
-    end
-    queueAbility("consecration", "consecration")
-    queueAbility("holy_shield", "holy_shield")
-    queueAbility("judgement_of_wisdom", "judgement")
-
-    -- Divine Plea for mana
-    if s.mana.pct < 60 then
-        queueAbility("divine_plea", "divine_plea")
-    end
-
-    -- Helper to check duplicates
-    local function isDuplicate(abilityKey)
-        for _, rec in ipairs(recommendations) do
-            if rec.ability == abilityKey then return true end
-        end
-        return false
-    end
-
-    -- Add ready abilities first (skip dupes from SoR/HotR interleave above)
-    for _, entry in ipairs(queue) do
-        if entry.ready and not isDuplicate(entry.ability) then
-            if addRec(recommendations, entry.ability) then return recommendations end
-        end
-    end
-
-    -- Fill remaining with next off CD (shortest first)
-    local onCD = {}
-    for _, entry in ipairs(queue) do
-        if not entry.ready then
-            table.insert(onCD, entry)
-        end
-    end
-    table.sort(onCD, function(a, b) return a.remains < b.remains end)
-
-    for _, entry in ipairs(onCD) do
-        if #recommendations >= 3 then break end
-        if not isDuplicate(entry.ability) then
-            addRec(recommendations, entry.ability)
+            if shortest < 999 then
+                SimulatePaladinTime(shortest + 0.01)
+                action = GetNextProtAbility()
+                if action then
+                    addRec(recommendations, action)
+                    SimulateProtAbility(action)
+                end
+            end
         end
     end
 
