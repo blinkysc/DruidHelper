@@ -50,12 +50,6 @@ local function GetRetributionRecommendations(addon)
         return recommendations
     end
 
-    -- Seal check: recommend Seal of Vengeance if no seal active
-    if not s.buff.seal_of_vengeance.up and not s.buff.seal_of_command.up
-        and not s.buff.seal_of_righteousness.up then
-        if addRec(recommendations, "seal_of_vengeance") then return recommendations end
-    end
-
     -- Build priority queue: { abilityKey, cooldownKey, ready, remains, condition }
     -- Sorted by: ready first (by priority order), then by CD remaining
     local queue = {}
@@ -72,6 +66,10 @@ local function GetRetributionRecommendations(addon)
         if addRec(recommendations, "avenging_wrath") then return recommendations end
     end
 
+    -- Target type detection
+    local creatureType = UnitCreatureType("target")
+    local isUndeadOrDemon = creatureType == "Undead" or creatureType == "Demon"
+
     -- Execute phase: HoW (highest priority when available)
     local inExecute = s.target.health.pct < 20
     if inExecute then
@@ -79,6 +77,11 @@ local function GetRetributionRecommendations(addon)
     end
 
     -- Core FCFS rotation (wowhead priority)
+    -- Against Undead/Demons: Exorcism gets 100% crit, boost it above CS
+    if isUndeadOrDemon and s.buff.art_of_war.up then
+        queueAbility("exorcism", "exorcism")
+    end
+
     -- 1. Crusader Strike - "highest priority button in single target"
     queueAbility("crusader_strike", "crusader_strike")
     -- 2. Judgement of Wisdom
@@ -89,12 +92,14 @@ local function GetRetributionRecommendations(addon)
     if s.target.time_to_die > 4 then
         queueAbility("consecration", "consecration")
     end
-    -- 5. Exorcism (only with Art of War proc - instant cast)
-    if s.buff.art_of_war.up then
+    -- 5. Exorcism (Art of War proc - normal priority vs non-undead)
+    if not isUndeadOrDemon and s.buff.art_of_war.up then
         queueAbility("exorcism", "exorcism")
     end
-    -- 6. Holy Wrath (filler, useful vs undead/demons)
-    queueAbility("holy_wrath", "holy_wrath")
+    -- 6. Holy Wrath (only vs undead/demons - it can't hit other types)
+    if isUndeadOrDemon then
+        queueAbility("holy_wrath", "holy_wrath")
+    end
 
     -- Divine Plea if low mana
     if s.mana.pct < 50 then
@@ -157,12 +162,6 @@ local function GetProtectionRecommendations(addon)
     -- Righteous Fury check
     if not s.buff.righteous_fury.up then
         if addRec(recommendations, "righteous_fury") then return recommendations end
-    end
-
-    -- Seal check
-    if not s.buff.seal_of_vengeance.up and not s.buff.seal_of_command.up
-        and not s.buff.seal_of_righteousness.up then
-        if addRec(recommendations, "seal_of_vengeance") then return recommendations end
     end
 
     -- Build priority queue
