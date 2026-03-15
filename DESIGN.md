@@ -121,6 +121,8 @@ DH:RegisterDefaults({class_settings = {}})
 
 ### Step 2: Create `Classes/<ClassName>/Core.lua`
 
+**All rotations MUST use a simulation system** — copy state into a sim table, get the best ability, simulate its effects, advance time, repeat for 3 recommendations. This prevents icon flickering and gives the player anticipation of what's coming next.
+
 ```lua
 local DH = PriorityHelper
 if not DH then return end
@@ -130,7 +132,10 @@ local ns = DH.ns
 local class = DH.Class
 local state = DH.State
 
--- Helper
+-- Simulated state table
+local sim = {}
+
+-- Helper to add recommendation
 local function addRec(recommendations, key)
     local ability = class.abilities[key]
     if ability then
@@ -141,47 +146,90 @@ local function addRec(recommendations, key)
     return #recommendations >= 3
 end
 
--- Rotation function
+-- Step 1: Reset sim from real state
+local function ResetSim(s)
+    sim.gcd_remains = s.gcd_remains or 0
+
+    -- Copy all relevant state: resources, buffs, debuffs, cooldowns
+    sim.resource = s.resource_type.current  -- e.g. energy, mana, rage
+    sim.buff_x_up = s.buff.x.up
+    sim.buff_x_remains = s.buff.x.remains
+    sim.debuff_y_remains = s.debuff.y.remains
+    sim.cd_z_ready = s.cooldown.z.ready
+    sim.cd_z_remains = s.cooldown.z.remains
+
+    -- Account for haste on cast times / GCD
+    local haste = s.stat.spell_haste or 1
+    sim.gcd = math.max(1.0, 1.5 / haste)
+    sim.cast_time = BASE_CAST / haste
+end
+
+-- Step 2: Simulate time passing
+local function SimulateTime(seconds)
+    if seconds <= 0 then return end
+
+    -- Tick down all tracked buff/debuff/cooldown timers
+    sim.buff_x_remains = sim.buff_x_remains - seconds
+    if sim.buff_x_remains <= 0 then
+        sim.buff_x_up = false
+        sim.buff_x_remains = 0
+    end
+
+    sim.debuff_y_remains = sim.debuff_y_remains - seconds
+    if sim.debuff_y_remains < 0 then sim.debuff_y_remains = 0 end
+
+    sim.cd_z_remains = sim.cd_z_remains - seconds
+    if sim.cd_z_remains <= 0 then
+        sim.cd_z_ready = true
+        sim.cd_z_remains = 0
+    end
+
+    -- Regen resources if applicable
+    sim.resource = math.min(MAX, sim.resource + REGEN_RATE * seconds)
+end
+
+-- Step 3: Simulate an ability's effects
+local function SimulateAbility(action)
+    if action == "dot_ability" then
+        sim.debuff_y_remains = DOT_DURATION
+        SimulateTime(sim.gcd)
+    elseif action == "nuke" then
+        SimulateTime(sim.cast_time)
+    elseif action == "cooldown_ability" then
+        sim.cd_z_ready = false
+        sim.cd_z_remains = CD_DURATION
+        SimulateTime(sim.gcd)
+    end
+end
+
+-- Step 4: Priority logic (called once per sim iteration)
+local function GetNextAbility()
+    -- Check conditions against sim state (NOT real state)
+    if sim.cd_z_ready then return "cooldown_ability" end
+    if sim.debuff_y_remains < 1 then return "dot_ability" end
+    return "nuke"
+end
+
+-- Step 5: Main rotation function — simulate 3 GCDs ahead
 local function GetMyRotation(addon)
     local recommendations = {}
     local s = state
     if not s.target.exists or not s.target.canAttack then return recommendations end
 
-    -- Build priority queue
-    local queue = {}
-    local function queueAbility(abilityKey, cdKey, condition)
-        if condition == false then return end
-        local cd = s.cooldown[cdKey]
-        local remains = cd and cd.remains or 0
-        local ready = remains <= 0.1
-        table.insert(queue, {ability = abilityKey, ready = ready, remains = remains})
+    ResetSim(s)
+
+    -- Account for current GCD
+    if sim.gcd_remains > 0 then
+        SimulateTime(sim.gcd_remains)
     end
 
-    -- Add abilities in priority order
-    queueAbility("ability1", "ability1")
-    queueAbility("ability2", "ability2")
-    -- ...
-
-    -- Pass 1: ready abilities in priority order
-    local function isDuplicate(key)
-        for _, r in ipairs(recommendations) do if r.ability == key then return true end end
-        return false
-    end
-    for _, entry in ipairs(queue) do
-        if entry.ready and not isDuplicate(entry.ability) then
-            if addRec(recommendations, entry.ability) then return recommendations end
+    -- Simulate 3 abilities
+    for i = 1, 3 do
+        local action = GetNextAbility()
+        if action then
+            addRec(recommendations, action)
+            SimulateAbility(action)
         end
-    end
-
-    -- Pass 2: fill with next off CD
-    local onCD = {}
-    for _, entry in ipairs(queue) do
-        if not entry.ready then table.insert(onCD, entry) end
-    end
-    table.sort(onCD, function(a, b) return a.remains < b.remains end)
-    for _, entry in ipairs(onCD) do
-        if #recommendations >= 3 then break end
-        if not isDuplicate(entry.ability) then addRec(recommendations, entry.ability) end
     end
 
     return recommendations
@@ -194,6 +242,16 @@ DH:RegisterMode("mode_key", {
     rotation = function(addon) return GetMyRotation(addon) end,
 })
 ```
+
+### Simulation Design Principles
+
+1. **Always simulate** — never just check current state for all 3 icons. Each recommendation must account for the effects of previous recommendations.
+2. **Copy state first** — never modify real `state`, always work on a `sim` copy.
+3. **Advance time by cast duration** — instant/GCD abilities advance by `sim.gcd`, casted spells advance by their haste-adjusted cast time.
+4. **Track everything that changes** — if a buff expires, a DoT ticks down, or a cooldown comes off CD during the sim window, the priority logic sees it.
+5. **Account for haste** — cast times, GCD, and resource regen are all affected by haste. Read `state.stat.spell_haste` or melee haste as appropriate.
+6. **DoT refresh timing** — follow the spec guide. Most WotLK DoTs should be "allowed to fall off before reapplying" (check `< 1`), not pandemic-clipped early.
+7. **Snoozeable CDs** — major cooldowns should use `DH:RegisterSnoozeable(key, 60)` and check `DH:IsSnoozed(key)` so players can skip them without nagging.
 
 ### Step 3: Add to TOC (BEFORE Config.lua)
 
