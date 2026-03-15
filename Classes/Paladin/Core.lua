@@ -281,16 +281,21 @@ local function GetRetributionRecommendations(addon)
             addRec(recommendations, action)
             SimulateRetAbility(action)
         else
-            -- Nothing ready, advance time to next available ability
-            local shortest = 999
-            if sim.cs_cd > 0 and sim.cs_cd < shortest then shortest = sim.cs_cd end
-            if sim.judge_cd > 0 and sim.judge_cd < shortest then shortest = sim.judge_cd end
-            if sim.has_ds and sim.ds_cd > 0 and sim.ds_cd < shortest then shortest = sim.ds_cd end
-            if sim.cons_cd > 0 and sim.cons_cd < shortest then shortest = sim.cons_cd end
-            if sim.in_execute and sim.how_cd > 0 and sim.how_cd < shortest then shortest = sim.how_cd end
+            -- Nothing ready — advance time (at least one GCD via framework)
+            local waitTime = DH:SimWaitTime(sim, {
+                sim.cs_cd, sim.judge_cd, sim.ds_cd, sim.cons_cd,
+                sim.in_execute and sim.how_cd or 999,
+            })
 
-            if shortest < 999 then
-                SimulatePaladinTime(shortest + 0.01)
+            -- Divine Plea fills GCD gaps when mana is low
+            if sim.plea_ready and sim.mana_pct < 40 then
+                addRec(recommendations, "divine_plea")
+                sim.plea_ready = false
+                sim.plea_cd = 60
+                DH:SimGainManaPct(sim, 0.25)
+                SimulatePaladinTime(sim.gcd)
+            elseif waitTime < 999 then
+                SimulatePaladinTime(waitTime + 0.01)
                 action = GetNextRetAbility()
                 if action then
                     addRec(recommendations, action)
@@ -403,17 +408,20 @@ local function GetProtectionRecommendations(addon)
             addRec(recommendations, action)
             SimulateProtAbility(action)
         else
-            -- Nothing ready, advance time to next available ability
-            local shortest = 999
-            if sim.sor_cd > 0 and sim.sor_cd < shortest then shortest = sim.sor_cd end
-            if sim.hotr_cd > 0 and sim.hotr_cd < shortest then shortest = sim.hotr_cd end
-            if sim.cons_cd > 0 and sim.cons_cd < shortest then shortest = sim.cons_cd end
-            if sim.hs_cd > 0 and sim.hs_cd < shortest then shortest = sim.hs_cd end
-            if sim.judge_cd > 0 and sim.judge_cd < shortest then shortest = sim.judge_cd end
-            if sim.in_execute and sim.how_cd > 0 and sim.how_cd < shortest then shortest = sim.how_cd end
+            -- Nothing ready — advance time (at least one GCD via framework)
+            local waitTime = DH:SimWaitTime(sim, {
+                sim.sor_cd, sim.hotr_cd, sim.cons_cd, sim.hs_cd, sim.judge_cd,
+                sim.in_execute and sim.how_cd or 999,
+            })
 
-            if shortest < 999 then
-                SimulatePaladinTime(shortest + 0.01)
+            if sim.plea_ready and sim.mana_pct < 40 then
+                addRec(recommendations, "divine_plea")
+                sim.plea_ready = false
+                sim.plea_cd = 60
+                DH:SimGainManaPct(sim, 0.25)
+                SimulatePaladinTime(sim.gcd)
+            elseif waitTime < 999 then
+                SimulatePaladinTime(waitTime + 0.01)
                 action = GetNextProtAbility()
                 if action then
                     addRec(recommendations, action)

@@ -2,6 +2,18 @@
 
 All notable changes to PriorityHelper will be documented in this file.
 
+## [1.1.4] - 2026-03-15
+
+### Added
+- `SimWaitTime()` framework helper: ensures sim advances by at least one GCD
+  when waiting for abilities, preventing low-priority abilities from jumping
+  ahead of higher-priority ones that are fractions of a second behind
+
+### Fixed
+- Paladin: abilities within one GCD of each other now both resolve before
+  priority decides (e.g., Exorcism no longer jumps ahead of CS by 0.3s)
+- Prot Paladin: Divine Plea properly simulated in GCD gaps
+
 ## [1.1.3] - 2026-03-15
 
 ### Added

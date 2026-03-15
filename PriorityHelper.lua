@@ -6,7 +6,7 @@
 PriorityHelper = {}
 local DH = PriorityHelper
 
-DH.Version = "1.1.3"
+DH.Version = "1.1.4"
 
 -- Namespace for internal data
 local ns = {}
@@ -239,6 +239,25 @@ function DH:SimTickCD(simState, cdField, readyField, seconds)
             simState[cdField] = 0
         end
     end
+end
+
+-- ---- Wait / Advance Time ----
+
+-- Calculate how long to wait until the next action is available.
+-- Takes a list of CD remaining values and the sim's GCD.
+-- Returns the wait time (at least one GCD, so close CDs both resolve).
+-- Usage: local wait = DH:SimWaitTime(sim, {sim.cs_cd, sim.judge_cd, sim.ds_cd})
+function DH:SimWaitTime(simState, cdList)
+    local shortest = 999
+    for _, cd in ipairs(cdList) do
+        if cd > 0 and cd < shortest then
+            shortest = cd
+        end
+    end
+    if shortest >= 999 then return shortest end
+    -- Wait at least one GCD so abilities within one GCD of each other
+    -- both get a chance to be ready (priority decides which to use)
+    return math.max(shortest, simState.gcd or 1.5)
 end
 
 -- ---- Target ----
