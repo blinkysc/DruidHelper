@@ -192,7 +192,9 @@ local function GetProtectionRecommendations(addon)
         if addRec(recommendations, "hammer_of_the_righteous") then return recommendations end
     end
 
-    -- Queue remaining abilities for filling slots
+    -- Queue ALL abilities for filling slots (SoR/HotR included for lookahead)
+    queueAbility("shield_of_righteousness", "shield_of_righteousness")
+    queueAbility("hammer_of_the_righteous", "hammer_of_the_righteous")
     if s.target.health.pct < 20 then
         queueAbility("hammer_of_wrath", "hammer_of_wrath")
     end
@@ -200,32 +202,38 @@ local function GetProtectionRecommendations(addon)
     queueAbility("holy_shield", "holy_shield")
     queueAbility("judgement_of_wisdom", "judgement")
 
-    -- Add ready abilities first
+    -- Divine Plea for mana
+    if s.mana.pct < 60 then
+        queueAbility("divine_plea", "divine_plea")
+    end
+
+    -- Helper to check duplicates
+    local function isDuplicate(abilityKey)
+        for _, rec in ipairs(recommendations) do
+            if rec.ability == abilityKey then return true end
+        end
+        return false
+    end
+
+    -- Add ready abilities first (skip dupes from SoR/HotR interleave above)
     for _, entry in ipairs(queue) do
-        if entry.ready then
+        if entry.ready and not isDuplicate(entry.ability) then
             if addRec(recommendations, entry.ability) then return recommendations end
         end
     end
 
-    -- Fill remaining with next off CD (include SoR/HotR for lookahead)
-    local fillQueue = {
-        { ability = "shield_of_righteousness", remains = sor_remains },
-        { ability = "hammer_of_the_righteous", remains = hotr_remains },
-    }
+    -- Fill remaining with next off CD (shortest first)
+    local onCD = {}
     for _, entry in ipairs(queue) do
         if not entry.ready then
-            table.insert(fillQueue, entry)
+            table.insert(onCD, entry)
         end
     end
-    table.sort(fillQueue, function(a, b) return a.remains < b.remains end)
+    table.sort(onCD, function(a, b) return a.remains < b.remains end)
 
-    for _, entry in ipairs(fillQueue) do
+    for _, entry in ipairs(onCD) do
         if #recommendations >= 3 then break end
-        local isDupe = false
-        for _, rec in ipairs(recommendations) do
-            if rec.ability == entry.ability then isDupe = true break end
-        end
-        if not isDupe then
+        if not isDuplicate(entry.ability) then
             addRec(recommendations, entry.ability)
         end
     end
