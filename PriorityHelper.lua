@@ -45,6 +45,13 @@ DH.State = {}
 ns.queue = {}
 ns.recommendations = {}
 
+-- Recommendation stability: prevent flickering by keeping recommendations
+-- stable for at least one GCD. If the new recommendations differ from the
+-- previous ones, only update if enough time has passed.
+ns.lastRecTime = 0
+ns.lastRecAbilities = {}
+local REC_STABLE_DURATION = 0.5  -- Minimum time a recommendation stays visible
+
 -- UI elements
 ns.UI = {
     MainFrame = nil,

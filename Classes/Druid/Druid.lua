@@ -568,6 +568,11 @@ DH:RegisterDefaults({
     },
 })
 
+-- Major cooldowns: snoozeable if player skips them (60s snooze)
+DH:RegisterSnoozeable("force_of_nature", 60)
+DH:RegisterSnoozeable("starfall", 60)
+DH:RegisterSnoozeable("berserk", 60)
+
 -- ============================================================================
 -- DRUID-SPECIFIC TRACKING
 -- ============================================================================

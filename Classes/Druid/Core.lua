@@ -52,7 +52,7 @@ local function ResetSimState(s)
     sim.has_ooc_talent = s.talent.omen_of_clarity.rank > 0
     sim.has_ooc_glyph = s.glyph.omen_of_clarity and s.glyph.omen_of_clarity.enabled
     sim.has_furor = s.talent.furor.rank >= 5
-    sim.berserk_ready = s.cooldown.berserk.ready
+    sim.berserk_ready = s.cooldown.berserk.ready and not DH:IsSnoozed("berserk")
     sim.berserk_remains = s.buff.berserk.remains or 0
     sim.ff_ready = s.cooldown.faerie_fire_feral.ready
     sim.ff_cd_remains = s.cooldown.faerie_fire_feral.remains
@@ -695,13 +695,52 @@ local function GetBalanceRecommendations(addon)
     local lunar_icd_ready = s.buff.eclipse_lunar.last_applied == 0
         or (now - s.buff.eclipse_lunar.last_applied) >= 30
 
-    -- 1. Force of Nature off CD (if > 20s remaining)
-    if s.talent.force_of_nature.rank > 0 and s.cooldown.force_of_nature.ready and s.target.time_to_die > 20 then
+    -- Determine the primary nuke based on Eclipse state
+    local eclipseActive = lunar_up or solar_up
+    local spamSpell = nil
+
+    if lunar_up then
+        spamSpell = "starfire"   -- Lunar Eclipse → Starfire buffed
+    elseif solar_up then
+        spamSpell = "wrath"      -- Solar Eclipse → Wrath buffed
+    elseif not lunar_icd_ready then
+        spamSpell = "starfire"   -- Fish for Solar with Starfire
+    else
+        spamSpell = "wrath"      -- Fish for Lunar with Wrath
+    end
+
+    -- Pandemic-style DoT tracking (same approach as cat rotation)
+    -- Use a wider window during Eclipse so the player can anticipate the refresh
+    -- instead of it suddenly appearing mid-spam
+    local moonfire_remains = s.debuff.moonfire.remains
+    local is_remains = s.debuff.insect_swarm.remains
+    local dot_refresh_window = eclipseActive and 5 or 3  -- Wider window during Eclipse
+    local moonfire_needs_refresh = moonfire_remains < dot_refresh_window and s.target.time_to_die > 6
+    local is_needs_refresh = is_remains < dot_refresh_window and s.target.time_to_die > 6
+
+    -- During Eclipse: spam the buffed spell, refresh Moonfire if in pandemic window
+    if eclipseActive then
+        if moonfire_needs_refresh then
+            addRec("moonfire")
+        end
+
+        while #recommendations < 3 do
+            addRec(spamSpell)
+        end
+        return recommendations
+    end
+
+    -- NO ECLIPSE: normal priority
+
+    -- 1. Force of Nature off CD (snoozeable)
+    if s.talent.force_of_nature.rank > 0 and s.cooldown.force_of_nature.ready
+        and s.target.time_to_die > 20 and not DH:IsSnoozed("force_of_nature") then
         if addRec("force_of_nature") then return recommendations end
     end
 
-    -- 2. Starfall off CD
-    if s.talent.starfall.rank > 0 and s.cooldown.starfall.ready then
+    -- 2. Starfall off CD (snoozeable)
+    if s.talent.starfall.rank > 0 and s.cooldown.starfall.ready
+        and not DH:IsSnoozed("starfall") then
         if addRec("starfall") then return recommendations end
     end
 
@@ -710,44 +749,19 @@ local function GetBalanceRecommendations(addon)
         if addRec("faerie_fire") then return recommendations end
     end
 
-    -- 4. Moonfire if not active on target
-    if not s.debuff.moonfire.up then
+    -- 4. Moonfire if in pandemic window (< 3s remaining)
+    if moonfire_needs_refresh then
         if addRec("moonfire") then return recommendations end
     end
 
-    -- 5. ECLIPSE ACTIVE: spam the buffed spell
-    if lunar_up then
-        -- Lunar Eclipse active → Starfire is buffed (crit bonus)
-        if addRec("starfire") then return recommendations end
-    end
-
-    if solar_up then
-        -- Solar Eclipse active → Wrath is buffed (damage bonus)
-        if addRec("wrath") then return recommendations end
-    end
-
-    -- 6. NO ECLIPSE: fishing phase + DoT maintenance
-
-    -- Insect Swarm: only refresh when Lunar ICD is NOT ready AND Lunar Eclipse
-    -- isn't about to expire (don't waste GCDs during buffed Starfire window)
-    local lunar_ending_soon = lunar_up and s.buff.eclipse_lunar.remains < 5
-    if s.talent.insect_swarm.rank > 0 and not s.debuff.insect_swarm.up
-        and not lunar_icd_ready and not lunar_ending_soon then
+    -- 5. Insect Swarm in pandemic window, only when Lunar ICD is NOT ready
+    if s.talent.insect_swarm.rank > 0 and is_needs_refresh and not lunar_icd_ready then
         if addRec("insect_swarm") then return recommendations end
     end
 
-    -- Fishing logic from sim APL:
-    if not lunar_icd_ready then
-        -- Lunar ICD not ready → cast Starfire to fish for Solar Eclipse
-        if addRec("starfire") then return recommendations end
-    else
-        -- Lunar ICD ready → cast Wrath to fish for Lunar Eclipse
-        if addRec("wrath") then return recommendations end
-    end
-
-    -- Fallback (shouldn't reach here, but just in case)
-    if #recommendations < 3 then
-        addRec("wrath")
+    -- 6. Primary nuke (fishing spell) fills remaining slots
+    while #recommendations < 3 do
+        addRec(spamSpell)
     end
 
     return recommendations
